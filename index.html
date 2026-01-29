@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Easy Text Copier</title>
+    <style>
+        :root {
+            --primary: #007AFF;
+            --secondary: #5856D6;
+            --warning: #FF9500;
+            --danger: #FF3B30;
+            --bg: #F2F2F7;
+            --gray: #8E8E93;
+            --light-gray: #E5E5EA;
+        }
+
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            background-color: var(--bg);
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+        }
+
+        .container { width: 100%; max-width: 600px; }
+
+        textarea {
+            width: 100%; height: 140px;
+            padding: 12px; border-radius: 12px;
+            border: 1px solid #C7C7CC; font-size: 16px;
+            box-sizing: border-box; margin-bottom: 12px;
+            outline: none;
+        }
+
+        /* Single row layout for all buttons */
+        .controls {
+            display: flex; 
+            gap: 8px; 
+            margin-bottom: 20px;
+            overflow-x: auto; /* Scrollable if screen is too narrow */
+            width: 100%;
+            padding-bottom: 5px;
+        }
+
+        button {
+            white-space: nowrap;
+            padding: 10px 14px; 
+            border: none; 
+            border-radius: 10px;
+            font-weight: 600; 
+            cursor: pointer; 
+            transition: all 0.2s;
+            font-size: 13px;
+            flex: 1;
+        }
+
+        /* Button States */
+        #multiBtn { background: var(--gray); color: white; }
+        #multiBtn.active { background: var(--warning); }
+        
+        #bulletBtn { background: var(--light-gray); color: #333; display: none; }
+        #bulletBtn.active { background: var(--secondary); color: white; }
+        
+        #resetBtn { background: var(--danger); color: white; display: none; }
+
+        .show { display: block !important; }
+
+        #chipContainer {
+            display: flex; flex-wrap: wrap; gap: 8px;
+        }
+
+        .chip {
+            background: white; padding: 12px 16px;
+            border-radius: 12px; border: 1.5px solid var(--primary);
+            color: var(--primary); font-size: 14px;
+            transition: all 0.15s; cursor: pointer;
+            user-select: none; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .chip.selected {
+            background: var(--primary); color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,122,255,0.3);
+        }
+
+        .toast {
+            position: fixed; bottom: 30px; background: rgba(0,0,0,0.85);
+            color: white; padding: 10px 20px; border-radius: 25px;
+            display: none; z-index: 1000; font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <textarea id="inputText" placeholder="Paste text here and tap outside to generate segments..." onblur="generateChips()"></textarea>
+
+    <div class="controls">
+        <button id="multiBtn" onclick="toggleMultiMode()">Multi-Mode</button>
+        <button id="bulletBtn" onclick="toggleBullet()">Add Bullets (-)</button>
+        <button id="resetBtn" onclick="resetSelection()">Reset</button>
+    </div>
+
+    <div id="chipContainer"></div>
+</div>
+
+<div id="toast" class="toast">Copied to Clipboard!</div>
+
+<script>
+    let isMultiMode = false;
+    let useBullet = false;
+    let selectedQueue = [];
+
+    /**
+     * Load saved input text
+     */
+    window.onload = () => {
+        const savedText = localStorage.getItem('savedText');
+
+        if (savedText) {
+            document.getElementById('inputText').value = savedText;
+            generateChips();
+        }
+    };
+
+    /**
+     * Splits text into clickable segments when textarea loses focus
+     */
+    function generateChips() {
+        const text = document.getElementById('inputText').value.trim();
+        const container = document.getElementById('chipContainer');
+        localStorage.setItem('savedText', text);
+
+        const segments = text.split(/\n+/).filter(s => s.trim() !== '');
+        container.innerHTML = '';
+        resetSelection();
+
+        segments.forEach(seg => {
+            const div = document.createElement('div');
+            div.className = 'chip';
+            div.innerText = seg.trim();
+            div.onclick = () => handleSelect(seg.trim(), div);
+            container.appendChild(div);
+        });
+    }
+
+    /**
+     * Toggles the selection mode and resets queue if turned off
+     */
+    function toggleMultiMode() {
+        isMultiMode = !isMultiMode;
+        const btn = document.getElementById('multiBtn');
+        const bulletBtn = document.getElementById('bulletBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        
+        btn.classList.toggle('active', isMultiMode);
+        
+        // Show/Hide sub-options based on mode
+        bulletBtn.classList.toggle('show', isMultiMode);
+        resetBtn.classList.toggle('show', isMultiMode);
+
+        resetSelection();
+    }
+
+    /**
+     * Toggles whether to prepend "- " to items
+     */
+    function toggleBullet() {
+        useBullet = !useBullet;
+        document.getElementById('bulletBtn').classList.toggle('active', useBullet);
+        
+        // Immediately refresh clipboard if items are already selected
+        if (selectedQueue.length > 0) copyCurrentBatch();
+    }
+
+    /**
+     * Handles clicking on individual text chips
+     */
+    function handleSelect(text, el) {
+        if (!isMultiMode) {
+            // Single Mode: Copy immediately
+            copyToClipboard(text);
+            return;
+        }
+
+        // Multi Mode: Toggle selection in queue
+        const idx = selectedQueue.indexOf(text);
+        if (idx > -1) {
+            selectedQueue.splice(idx, 1);
+            el.classList.remove('selected');
+        } else {
+            selectedQueue.push(text);
+            el.classList.add('selected');
+        }
+
+        // Always copy the current combined state
+        copyCurrentBatch();
+    }
+
+    /**
+     * Formats selected items and copies to clipboard
+     */
+    function copyCurrentBatch() {
+        if (selectedQueue.length === 0) return;
+        
+        let finalOutput = useBullet 
+            ? selectedQueue.map(t => `- ${t}`).join('\n') 
+            : selectedQueue.join('\n');
+
+        copyToClipboard(finalOutput);
+    }
+
+    /**
+     * Clears all selections and UI states
+     */
+    function resetSelection() {
+        selectedQueue = [];
+        document.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+    }
+
+    /**
+     * Core clipboard function with visual feedback
+     */
+    async function copyToClipboard(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            showToast();
+        } catch (err) {
+            console.error("Clipboard Error:", err);
+        }
+    }
+
+    function showToast() {
+        const toast = document.getElementById('toast');
+        toast.style.display = 'block';
+        setTimeout(() => toast.style.display = 'none', 1000);
+    }
+</script>
+
+</body>
+</html>
